@@ -2,7 +2,7 @@
 title: last.fm
 description: Discover music and fetch last.fm play history data.
 author: mattserrano
-version: 0.1.1
+version: 0.1.2
 """
 
 import requests
