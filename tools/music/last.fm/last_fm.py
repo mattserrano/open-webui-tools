@@ -28,7 +28,7 @@ class Tools:
         """Internal helper to call Last.fm API."""
         if not api_key:
             return None
-        url = "http://ws.audioscrobbler.com/2.0/"
+        url = "https://ws.audioscrobbler.com/2.0/"
         params.update(
             {
                 "method": method,
