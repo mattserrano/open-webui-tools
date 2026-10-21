@@ -252,6 +252,164 @@ class Tools:
             lines.append(f"{i}. **{name}** (MBID: {mbid}) – [{url}]({url})")
         return "\n".join(lines)
 
+
+    def get_artist_info(
+        self,
+        __user__: dict,
+        artist: Annotated[str, Field(description="Artist name")],
+        mbid: Annotated[
+            str | None,
+            Field(
+                description="MusicBrainz ID for the artist. If provided, artist parameter is ignored."
+            ),
+        ] = None,
+    ) -> str:
+        """Return information about a specific artist."""
+        api_key = self._get_api_key(__user__)
+        if not api_key:
+            return "Error: Last.fm API key not provided."
+        params = {}
+        if mbid:
+            params["mbid"] = mbid
+        else:
+            params["artist"] = artist
+        data = self._make_request(api_key, "artist.getinfo", params)
+        if not data:
+            return "No artist information found. Please check the artist name, or provide a valid MBID."
+        error = self._check_api_error(data)
+        if error:
+            return error
+        if "artist" not in data:
+            return "No artist data returned."
+        artist_data = data["artist"]
+        name = artist_data.get("name", "Unknown")
+        mbid_val = artist_data.get("mbid", "N/A")
+        url = artist_data.get("url", "#")
+        listeners = artist_data.get("listeners", "0")
+        playcount = artist_data.get("playcount", "0")
+        # Extract wiki summary if available
+        wiki_summary = ""
+        if "wiki" in artist_data and artist_data["wiki"]:
+            wiki_summary = artist_data["wiki"].get("summary", "")
+            if len(wiki_summary) > 500:
+                wiki_summary = wiki_summary[:500] + "..."
+        # Extract tags if available
+        tags = []
+        if "tags" in artist_data and artist_data["tags"]:
+            tag_list = artist_data["tags"].get("tag", [])
+            if isinstance(tag_list, dict):
+                tag_list = [tag_list]
+            for tag in tag_list[:5]:
+                tags.append(tag.get("name", ""))
+        lines = [
+            f"### Artist Info: {name}",
+            f"- **MBID:** {mbid_val}",
+            f"- **URL:** [{url}]({url})",
+            f"- **Listeners:** {listeners}",
+            f"- **Playcount:** {playcount}",
+        ]
+        if tags:
+            lines.append(f"- **Tags:** {', '.join(tags)}")
+        if wiki_summary:
+            lines.append(f"- **Summary:** {wiki_summary}")
+        return "\n".join(lines)
+
+    def get_artist_top_albums(
+        self,
+        __user__: dict,
+        artist: Annotated[str, Field(description="Artist name")],
+        mbid: Annotated[
+            str | None,
+            Field(
+                description="MusicBrainz ID for the artist. If provided, artist parameter is ignored."
+            ),
+        ] = None,
+        limit: int = Field(
+            default=5,
+            description="Number of top albums to return (1-10).",
+            ge=1,
+            le=10,
+        ),
+    ) -> str:
+        """Return an artist's top albums."""
+        api_key = self._get_api_key(__user__)
+        if not api_key:
+            return "Error: Last.fm API key not provided."
+        params = {}
+        if mbid:
+            params["mbid"] = mbid
+        else:
+            params["artist"] = artist
+        params["limit"] = limit
+        data = self._make_request(api_key, "artist.gettopalbums", params)
+        if not data:
+            return "No top albums found. Please check the artist name, or provide a valid MBID."
+        error = self._check_api_error(data)
+        if error:
+            return error
+        if "topalbums" not in data or "album" not in data["topalbums"]:
+            return "No album data returned."
+        albums = data["topalbums"]["album"]
+        if not albums:
+            return "No albums found for this artist."
+        albums = [albums] if isinstance(albums, dict) else albums
+        lines = [f"### Top {len(albums)} Albums for {artist}\n"]
+        for i, a in enumerate(albums, 1):
+            name = a.get("name", "Unknown")
+            playcount = a.get("playcount", "0")
+            mbid_val = a.get("mbid", "N/A")
+            url = a.get("url", "#")
+            lines.append(f"{i}. **{name}** ({playcount} plays) (MBID: {mbid_val}) – [{url}]({url})")
+        return "\n".join(lines)
+
+    def get_artist_top_tracks(
+        self,
+        __user__: dict,
+        artist: Annotated[str, Field(description="Artist name")],
+        mbid: Annotated[
+            str | None,
+            Field(
+                description="MusicBrainz ID for the artist. If provided, artist parameter is ignored."
+            ),
+        ] = None,
+        limit: int = Field(
+            default=5,
+            description="Number of top tracks to return (1-10).",
+            ge=1,
+            le=10,
+        ),
+    ) -> str:
+        """Return an artist's top tracks."""
+        api_key = self._get_api_key(__user__)
+        if not api_key:
+            return "Error: Last.fm API key not provided."
+        params = {}
+        if mbid:
+            params["mbid"] = mbid
+        else:
+            params["artist"] = artist
+        params["limit"] = limit
+        data = self._make_request(api_key, "artist.gettoptracks", params)
+        if not data:
+            return "No top tracks found. Please check the artist name, or provide a valid MBID."
+        error = self._check_api_error(data)
+        if error:
+            return error
+        if "toptracks" not in data or "track" not in data["toptracks"]:
+            return "No track data returned."
+        tracks = data["toptracks"]["track"]
+        if not tracks:
+            return "No tracks found for this artist."
+        tracks = [tracks] if isinstance(tracks, dict) else tracks
+        lines = [f"### Top {len(tracks)} Tracks for {artist}\n"]
+        for i, t in enumerate(tracks, 1):
+            name = t.get("name", "Unknown")
+            playcount = t.get("playcount", "0")
+            mbid_val = t.get("mbid", "N/A")
+            url = t.get("url", "#")
+            lines.append(f"{i}. **{name}** ({playcount} plays) (MBID: {mbid_val}) – [{url}]({url})")
+        return "\n".join(lines)
+
     # track methods
     def get_track_info(
         self,
@@ -543,4 +701,224 @@ class Tools:
             artist = track.get("artist", {}).get("name", "Unknown")
             playcount = track.get("playcount", "0")
             lines.append(f"{i}. {name} – {artist} ({playcount} plays)")
+        return "\n".join(lines)
+
+    def get_recent_tracks(
+        self,
+        __user__: dict,
+        user: Annotated[
+            str | None,
+            Field(
+                description="Last.fm username. If not provided, the default user from the valves will be used."
+            ),
+        ] = None,
+        limit: int = Field(
+            default=5,
+            description="Number of recent tracks to return (1-10).",
+            ge=1,
+            le=10,
+        ),
+    ) -> str:
+        """Return the user's recently played tracks."""
+        api_key = self._get_api_key(__user__)
+        if not api_key:
+            return "Error: Last.fm API key not provided."
+        username = self._get_username(__user__, user)
+        if not username:
+            return "Error: Last.fm username not provided."
+        params = {"user": username, "limit": limit}
+        data = self._make_request(api_key, "user.getrecenttracks", params)
+        if not data:
+            return "No recent tracks found."
+        error = self._check_api_error(data)
+        if error:
+            return error
+        if "recenttracks" not in data or "track" not in data["recenttracks"]:
+            return "No recent tracks data returned."
+        tracks = data["recenttracks"]["track"]
+        if not tracks:
+            return "No recent tracks found for this user."
+        tracks = [tracks] if isinstance(tracks, dict) else tracks
+        lines = [f"### Recent Tracks for {username}\n"]
+        for i, track in enumerate(tracks, 1):
+            name = track.get("name", "Unknown")
+            artist_val = track.get("artist", "Unknown")
+            artist = artist_val.get("name", "Unknown") if isinstance(artist_val, dict) else artist_val
+            album_val = track.get("album", "Unknown")
+            album = album_val.get("#text", "Unknown") if isinstance(album_val, dict) else album_val
+            url = track.get("url", "#")
+            date = ""
+            if track.get("date") and isinstance(track["date"], dict):
+                date = track["date"].get("#text", "")
+            line = f"{i}. **{name}** by *{artist}*"
+            if album and album != "Unknown":
+                line += f" (from *{album}*)"
+            if date:
+                line += f" — {date}"
+            line += f" – [{url}]({url})"
+            lines.append(line)
+        return "\n".join(lines)
+
+    def get_user_top_artists(
+        self,
+        __user__: dict,
+        user: Annotated[
+            str | None,
+            Field(
+                description="Last.fm username. If not provided, the default user from the valves will be used."
+            ),
+        ] = None,
+        limit: int = Field(
+            default=5,
+            description="Number of top artists to return (1-10).",
+            ge=1,
+            le=10,
+        ),
+    ) -> str:
+        """Return the user's top (most listened to) artists."""
+        api_key = self._get_api_key(__user__)
+        if not api_key:
+            return "Error: Last.fm API key not provided."
+        username = self._get_username(__user__, user)
+        if not username:
+            return "Error: Last.fm username not provided."
+        data = self._make_request(
+            api_key, "user.gettopartists", {"user": username, "limit": limit}
+        )
+        if not data:
+            return "No top artists found."
+        error = self._check_api_error(data)
+        if error:
+            return error
+        if "topartists" not in data or "artist" not in data["topartists"]:
+            return "No artist data returned."
+        artists = data["topartists"]["artist"]
+        if not artists:
+            return "No artists found for this user."
+        artists = [artists] if isinstance(artists, dict) else artists
+        lines = [f"### Top {len(artists)} Artists for {username}\n"]
+        for i, a in enumerate(artists, 1):
+            name = a.get("name", "Unknown")
+            playcount = a.get("playcount", "0")
+            mbid = a.get("mbid", "N/A")
+            url = a.get("url", "#")
+            lines.append(f"{i}. **{name}** ({playcount} plays) (MBID: {mbid}) – [{url}]({url})")
+        return "\n".join(lines)
+
+    def get_user_weekly_artist_chart(
+        self,
+        __user__: dict,
+        user: Annotated[
+            str | None,
+            Field(
+                description="Last.fm username. If not provided, the default user from the valves will be used."
+            ),
+        ] = None,
+    ) -> str:
+        """Return the user's weekly artist chart."""
+        api_key = self._get_api_key(__user__)
+        if not api_key:
+            return "Error: Last.fm API key not provided."
+        username = self._get_username(__user__, user)
+        if not username:
+            return "Error: Last.fm username not provided."
+        data = self._make_request(api_key, "user.getweeklyartistchart", {"user": username})
+        if not data:
+            return "No weekly artist chart found."
+        error = self._check_api_error(data)
+        if error:
+            return error
+        if "weeklyartistchart" not in data or "artist" not in data["weeklyartistchart"]:
+            return "No weekly artist chart data returned."
+        artists = data["weeklyartistchart"]["artist"]
+        if not artists:
+            return "No artists found in this user's weekly chart."
+        artists = [artists] if isinstance(artists, dict) else artists
+        lines = [f"### Weekly Artist Chart for {username}\n"]
+        for i, a in enumerate(artists, 1):
+            name = a.get("name", "Unknown")
+            playcount = a.get("playcount", "0")
+            mbid = a.get("mbid", "N/A")
+            url = a.get("url", "#")
+            lines.append(f"{i}. **{name}** ({playcount} plays) (MBID: {mbid}) – [{url}]({url})")
+        return "\n".join(lines)
+
+    def get_user_weekly_album_chart(
+        self,
+        __user__: dict,
+        user: Annotated[
+            str | None,
+            Field(
+                description="Last.fm username. If not provided, the default user from the valves will be used."
+            ),
+        ] = None,
+    ) -> str:
+        """Return the user's weekly album chart."""
+        api_key = self._get_api_key(__user__)
+        if not api_key:
+            return "Error: Last.fm API key not provided."
+        username = self._get_username(__user__, user)
+        if not username:
+            return "Error: Last.fm username not provided."
+        data = self._make_request(api_key, "user.getweeklyalbumchart", {"user": username})
+        if not data:
+            return "No weekly album chart found."
+        error = self._check_api_error(data)
+        if error:
+            return error
+        if "weeklyalbumchart" not in data or "album" not in data["weeklyalbumchart"]:
+            return "No weekly album chart data returned."
+        albums = data["weeklyalbumchart"]["album"]
+        if not albums:
+            return "No albums found in this user's weekly chart."
+        albums = [albums] if isinstance(albums, dict) else albums
+        lines = [f"### Weekly Album Chart for {username}\n"]
+        for i, a in enumerate(albums, 1):
+            name = a.get("name", "Unknown")
+            artist_val = a.get("artist", "Unknown")
+            artist = artist_val.get("name", "Unknown") if isinstance(artist_val, dict) else artist_val
+            playcount = a.get("playcount", "0")
+            mbid = a.get("mbid", "N/A")
+            url = a.get("url", "#")
+            lines.append(f"{i}. **{name}** by *{artist}* ({playcount} plays) (MBID: {mbid}) – [{url}]({url})")
+        return "\n".join(lines)
+
+    def get_user_weekly_track_chart(
+        self,
+        __user__: dict,
+        user: Annotated[
+            str | None,
+            Field(
+                description="Last.fm username. If not provided, the default user from the valves will be used."
+            ),
+        ] = None,
+    ) -> str:
+        """Return the user's weekly track chart."""
+        api_key = self._get_api_key(__user__)
+        if not api_key:
+            return "Error: Last.fm API key not provided."
+        username = self._get_username(__user__, user)
+        if not username:
+            return "Error: Last.fm username not provided."
+        data = self._make_request(api_key, "user.getweeklytrackchart", {"user": username})
+        if not data:
+            return "No weekly track chart found."
+        error = self._check_api_error(data)
+        if error:
+            return error
+        if "weeklytrackchart" not in data or "track" not in data["weeklytrackchart"]:
+            return "No weekly track chart data returned."
+        tracks = data["weeklytrackchart"]["track"]
+        if not tracks:
+            return "No tracks found in this user's weekly chart."
+        tracks = [tracks] if isinstance(tracks, dict) else tracks
+        lines = [f"### Weekly Track Chart for {username}\n"]
+        for i, t in enumerate(tracks, 1):
+            name = t.get("name", "Unknown")
+            artist_val = t.get("artist", "Unknown")
+            artist = artist_val.get("name", "Unknown") if isinstance(artist_val, dict) else artist_val
+            playcount = t.get("playcount", "0")
+            mbid = t.get("mbid", "N/A")
+            url = t.get("url", "#")
+            lines.append(f"{i}. **{name}** by *{artist}* ({playcount} plays) (MBID: {mbid}) – [{url}]({url})")
         return "\n".join(lines)
