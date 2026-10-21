@@ -463,57 +463,6 @@ class Tools:
             lines.append(f"- **Avatar:** ![Avatar]({image_url})")
         return "\n".join(lines)
 
-    def get_user_similar(
-        self,
-        __user__: dict,
-        limit: Annotated[
-            int,
-            Field(
-                default=5,
-                description="Number of similar users to return (1-10).",
-                ge=1,
-                le=10,
-            ),
-        ],
-        user: Annotated[
-            str | None,
-            Field(
-                description="Last.fm username. If not provided, the default user from the valves will be used."
-            ),
-        ] = None,
-    ) -> str:
-        """Return similar users to a given user."""
-        api_key = self._get_api_key(__user__)
-        if not api_key:
-            return "Error: Last.fm API key not provided."
-        username = self._get_username(__user__, user)
-        if not username:
-            return "Error: Last.fm username not provided."
-        params = {"user": username, "limit": limit}
-        data = self._make_request(api_key, "user.getSimilar", params)
-        if not data:
-            return "No similar users found. Please provide a valid username."
-        error = self._check_api_error(data)
-        if error:
-            return error
-        if "similarusers" not in data or "user" not in data["similarusers"]:
-            return "No similar users data returned."
-        similar_users = data["similarusers"]["user"]
-        if not similar_users:
-            return "No similar users found."
-        # Ensure it's a list
-        similar_users = [similar_users] if isinstance(similar_users, dict) else similar_users
-        lines = [f"### Similar Users to {username}\n"]
-        for i, sim_user in enumerate(similar_users, 1):
-            name = sim_user.get("name", "Unknown")
-            match = sim_user.get("match", "0")
-            image_url = self._extract_image_url(sim_user)
-            user_info = f"{i}. {name} (match: {match})"
-            if image_url:
-                user_info += f" ![Avatar]({image_url})"
-            lines.append(user_info)
-        return "\n".join(lines)
-
     def get_top_albums(
         self,
         __user__: dict,
