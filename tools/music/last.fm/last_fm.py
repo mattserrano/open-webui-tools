@@ -2,7 +2,7 @@
 title: last.fm
 description: Discover music and fetch last.fm play history data.
 author: mattserrano
-version: 0.1.0
+version: 0.1.1
 """
 
 import os
@@ -102,44 +102,44 @@ class Tools:
     def album_search(
         self,
         __user__: dict,
-        artist: Annotated[str, Field(description="Artist name")],
-        album: Annotated[str, Field(description="Album name")],
+        album: Annotated[str, Field(description="Album name to search for")],
+        artist: Annotated[
+            str | None,
+            Field(description="Artist name to narrow the search (optional)"),
+        ] = None,
+        limit: int = Field(
+            default=5,
+            description="Number of results to return (1-10).",
+            ge=1,
+            le=10,
+        ),
     ) -> str:
-        """Search for an album and return its information."""
+        """Search for albums by name using the Last.fm album.search API."""
         api_key = __user__["valves"].last_fm_api_key
         if not api_key:
             return "Error: Last.fm API key not provided."
-        params = {"album": album, "artist": artist}
-        data = self._make_request(api_key, "album.getInfo", params)
+        params = {"album": album, "limit": limit}
+        if artist:
+            params["artist"] = artist
+        data = self._make_request(api_key, "album.search", params)
         if not data:
-            return "No album information found. Please check the artist and album names, or provide a valid MBID."
+            return f"No results found for album '{album}'."
         if "error" in data:
             return f"API error: {data['error']}"
-        if "album" not in data:
-            return "No album data returned."
-        album_data = data["album"]
-        name = album_data.get("name", "Unknown")
-        artist_name = album_data.get("artist", "Unknown")
-        mbid_val = album_data.get("mbid", "N/A")
-        url = album_data.get("url", "#")
-        listeners = album_data.get("listeners", "0")
-        playcount = album_data.get("playcount", "0")
-        # Extract wiki summary if available
-        wiki_summary = ""
-        if "wiki" in album_data and album_data["wiki"]:
-            wiki_summary = album_data["wiki"].get("summary", "")
-            # Truncate summary to first 500 characters for brevity
-            if len(wiki_summary) > 500:
-                wiki_summary = wiki_summary[:500] + "..."
-        lines = [
-            f"### Album Info: {name} by {artist_name}",
-            f"- **MBID:** {mbid_val}",
-            f"- **URL:** [{url}]({url})",
-            f"- **Listeners:** {listeners}",
-            f"- **Playcount:** {playcount}",
-        ]
-        if wiki_summary:
-            lines.append(f"- **Summary:** {wiki_summary}")
+        results = data.get("results", {})
+        matches = results.get("albummatches", {}).get("album", [])
+        if not matches:
+            return f"No albums found matching '{album}'."
+        # Ensure it's a list (API returns dict for single result)
+        if isinstance(matches, dict):
+            matches = [matches]
+        lines = [f"### Album Search Results for '{album}'\n"]
+        for i, m in enumerate(matches, 1):
+            name = m.get("name", "Unknown")
+            artist_name = m.get("artist", "Unknown")
+            mbid = m.get("mbid", "N/A")
+            url = m.get("url", "#")
+            lines.append(f"{i}. **{name}** by *{artist_name}* (MBID: {mbid}) – [{url}]({url})")
         return "\n".join(lines)
 
     # artist methods
@@ -197,42 +197,37 @@ class Tools:
     def artist_search(
         self,
         __user__: dict,
-        artist: Annotated[str, Field(description="Artist name")],
+        artist: Annotated[str, Field(description="Artist name to search for")],
+        limit: int = Field(
+            default=5,
+            description="Number of results to return (1-10).",
+            ge=1,
+            le=10,
+        ),
     ) -> str:
-        """Search for an artist and return its information."""
+        """Search for artists by name using the Last.fm artist.search API."""
         api_key = __user__["valves"].last_fm_api_key
         if not api_key:
             return "Error: Last.fm API key not provided."
-        params = {"artist": artist}
-        data = self._make_request(api_key, "artist.getInfo", params)
+        params = {"artist": artist, "limit": limit}
+        data = self._make_request(api_key, "artist.search", params)
         if not data:
-            return "No artist information found. Please check the artist name, or provide a valid MBID."
+            return f"No results found for artist '{artist}'."
         if "error" in data:
             return f"API error: {data['error']}"
-        if "artist" not in data:
-            return "No artist data returned."
-        artist_data = data["artist"]
-        name = artist_data.get("name", "Unknown")
-        mbid_val = artist_data.get("mbid", "N/A")
-        url = artist_data.get("url", "#")
-        listeners = artist_data.get("stats", {}).get("listeners", "0")
-        playcount = artist_data.get("stats", {}).get("playcount", "0")
-        # Extract wiki summary if available
-        wiki_summary = ""
-        if "bio" in artist_data and artist_data["bio"]:
-            wiki_summary = artist_data["bio"].get("summary", "")
-            # Truncate summary to first 500 characters for brevity
-            if len(wiki_summary) > 500:
-                wiki_summary = wiki_summary[:500] + "..."
-        lines = [
-            f"### Artist Info: {name}",
-            f"- **MBID:** {mbid_val}",
-            f"- **URL:** [{url}]({url})",
-            f"- **Listeners:** {listeners}",
-            f"- **Playcount:** {playcount}",
-        ]
-        if wiki_summary:
-            lines.append(f"- **Summary:** {wiki_summary}")
+        results = data.get("results", {})
+        matches = results.get("artistmatches", {}).get("artist", [])
+        if not matches:
+            return f"No artists found matching '{artist}'."
+        # Ensure it's a list (API returns dict for single result)
+        if isinstance(matches, dict):
+            matches = [matches]
+        lines = [f"### Artist Search Results for '{artist}'\n"]
+        for i, m in enumerate(matches, 1):
+            name = m.get("name", "Unknown")
+            mbid = m.get("mbid", "N/A")
+            url = m.get("url", "#")
+            lines.append(f"{i}. **{name}** (MBID: {mbid}) – [{url}]({url})")
         return "\n".join(lines)
 
     # track methods
@@ -352,46 +347,44 @@ class Tools:
     def track_search(
         self,
         __user__: dict,
-        track: Annotated[str, Field(description="Track name")],
-        artist: Annotated[str, Field(description="Artist name")],
+        track: Annotated[str, Field(description="Track name to search for")],
+        artist: Annotated[
+            str | None,
+            Field(description="Artist name to narrow the search (optional)"),
+        ] = None,
+        limit: int = Field(
+            default=5,
+            description="Number of results to return (1-10).",
+            ge=1,
+            le=10,
+        ),
     ) -> str:
-        """Search for a track and return its information."""
+        """Search for tracks by name using the Last.fm track.search API."""
         api_key = __user__["valves"].last_fm_api_key
         if not api_key:
             return "Error: Last.fm API key not provided."
-
-        params = {"track": track, "artist": artist}
-        data = self._make_request(api_key, "track.getInfo", params)
+        params = {"track": track, "limit": limit}
+        if artist:
+            params["artist"] = artist
+        data = self._make_request(api_key, "track.search", params)
         if not data:
-            return "No track information found. Please check the artist and track names, or provide a valid MBID."
+            return f"No results found for track '{track}'."
         if "error" in data:
             return f"API error: {data['error']}"
-        if "track" not in data:
-            return "No track data returned."
-        track_data = data["track"]
-        name = track_data.get("name", "Unknown")
-        artist_name = track_data.get("artist", {}).get("name", "Unknown")
-        mbid_val = track_data.get("mbid", "N/A")
-        url = track_data.get("url", "#")
-        duration = track_data.get("duration", "0")  # in milliseconds
-        listeners = track_data.get("listeners", "0")
-        playcount = track_data.get("playcount", "0")
-        # Extract wiki summary if available
-        wiki_summary = ""
-        if "wiki" in track_data and track_data["wiki"]:
-            wiki_summary = track_data["wiki"].get("summary", "")
-            if len(wiki_summary) > 500:
-                wiki_summary = wiki_summary[:500] + "..."
-        lines = [
-            f"### Track Info: {name} by {artist_name}",
-            f"- **MBID:** {mbid_val}",
-            f"- **URL:** [{url}]({url})",
-            f"- **Duration:** {int(duration)//1000 if duration.isdigit() else 'N/A'} seconds",
-            f"- **Listeners:** {listeners}",
-            f"- **Playcount:** {playcount}",
-        ]
-        if wiki_summary:
-            lines.append(f"- **Summary:** {wiki_summary}")
+        results = data.get("results", {})
+        matches = results.get("trackmatches", {}).get("track", [])
+        if not matches:
+            return f"No tracks found matching '{track}'."
+        # Ensure it's a list (API returns dict for single result)
+        if isinstance(matches, dict):
+            matches = [matches]
+        lines = [f"### Track Search Results for '{track}'\n"]
+        for i, m in enumerate(matches, 1):
+            name = m.get("name", "Unknown")
+            artist_name = m.get("artist", "Unknown")
+            mbid = m.get("mbid", "N/A")
+            url = m.get("url", "#")
+            lines.append(f"{i}. **{name}** by *{artist_name}* (MBID: {mbid}) – [{url}]({url})")
         return "\n".join(lines)
 
     # user methods
