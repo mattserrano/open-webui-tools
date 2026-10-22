@@ -588,8 +588,9 @@ class Tools:
         name = artist_data.get("name", "Unknown")
         mbid_val = artist_data.get("mbid", "N/A")
         url = artist_data.get("url", "#")
-        listeners = artist_data.get("listeners", "0")
-        playcount = artist_data.get("playcount", "0")
+        stats = artist_data.get("stats", {})
+        listeners = stats.get("listeners", "0")
+        playcount = stats.get("playcount", "0")
         # Extract wiki summary if available
         wiki_summary = ""
         if "wiki" in artist_data and artist_data["wiki"]:
