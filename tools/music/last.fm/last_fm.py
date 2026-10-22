@@ -92,7 +92,7 @@ class Tools:
             description="Your last.fm username",
         )
         enable_rich_responses: bool = Field(
-            default=False,
+            default=True,
             description="Render results as rich embedded UI cards in the chat instead of plain Markdown.",
         )
 
