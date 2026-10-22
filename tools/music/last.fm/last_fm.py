@@ -7,7 +7,7 @@ version: 0.1.2
 
 import requests
 from pydantic import BaseModel, Field
-from typing import Annotated, Optional
+from typing import Annotated, Any, Optional
 
 
 class Tools:
@@ -29,10 +29,31 @@ class Tools:
     def _get_username(self, __user__: dict, user: Optional[str] = None) -> Optional[str]:
         return user or __user__["valves"].last_fm_api_user
 
-    def _check_api_error(self, data: dict) -> Optional[str]:
+    def _make_request(self, api_key: str, method: str, params: dict) -> dict[str, Any]:
+        """Internal helper to call Last.fm API."""
+        if not api_key:
+            raise RuntimeError("Last.fm API key not provided.")
+        url = "https://ws.audioscrobbler.com/2.0/"
+        params.update(
+            {
+                "method": method,
+                "api_key": api_key,
+                "format": "json",
+            }
+        )
+        try:
+            resp = requests.get(url, params=params, timeout=10)
+            resp.raise_for_status()
+            data = resp.json()
+
+        except requests.RequestException as e:
+            raise RuntimeError(f"Request failed: {e}") from e
+        except ValueError as e:
+            raise RuntimeError(f"Invalid JSON response: {e}") from e
         if "error" in data:
-            return f"API error: {data['error']}"
-        return None
+            raise RuntimeError(f"API error: {data.get('error', 'unknown')}")
+        
+        return data
 
     def _extract_image_url(self, data: dict) -> str:
         image_url = ""
@@ -45,26 +66,6 @@ class Tools:
                 image_url = data["image"][0].get("#text", "")
         return image_url
 
-    def _make_request(self, api_key: str, method: str, params: dict) -> Optional[dict]:
-        """Internal helper to call Last.fm API."""
-        if not api_key:
-            return None
-        url = "https://ws.audioscrobbler.com/2.0/"
-        params.update(
-            {
-                "method": method,
-                "api_key": api_key,
-                "format": "json",
-            }
-        )
-        try:
-            resp = requests.get(url, params=params, timeout=10)
-            resp.raise_for_status()
-            return resp.json()
-        except requests.RequestException as e:
-            # Return error info in a dict for the caller to handle
-            return {"error": str(e)}
-
     # album methods
     def get_album_info(
         self,
@@ -72,31 +73,22 @@ class Tools:
         artist: Annotated[str, Field(description="Artist name")],
         album: Annotated[str, Field(description="Album name")],
         mbid: Annotated[
-            str | None,
+            Optional[str],
             Field(
                 description="MusicBrainz ID for the album. If provided, artist and album are ignored."
             ),
         ] = None,
     ) -> str:
         """Return information about a specific album."""
-        api_key = self._get_api_key(__user__)
-        if not api_key:
-            return "Error: Last.fm API key not provided."
-        params = {}
-        if mbid:
-            params["mbid"] = mbid
-        else:
-            params["artist"] = artist
-            params["album"] = album
-        data = self._make_request(api_key, "album.getInfo", params)
-        if not data:
+        try:
+            api_key = self._get_api_key(__user__)
+            params = {"mbid": mbid} if mbid else {"artist": artist, "album": album}
+            data = self._make_request(api_key, "album.getInfo", params)
+        except RuntimeError as exc:
+            return f"Error: {exc}"
+        album_data = data.get("album", {})
+        if not album_data:
             return "No album information found. Please check the artist and album names, or provide a valid MBID."
-        error = self._check_api_error(data)
-        if error:
-            return error
-        if "album" not in data:
-            return "No album data returned."
-        album_data = data["album"]
         name = album_data.get("name", "Unknown")
         artist_name = album_data.get("artist", "Unknown")
         mbid_val = album_data.get("mbid", "N/A")
@@ -126,7 +118,7 @@ class Tools:
         __user__: dict,
         album: Annotated[str, Field(description="Album name to search for")],
         artist: Annotated[
-            str | None,
+            Optional[str],
             Field(description="Artist name to narrow the search (optional)"),
         ] = None,
         limit: int = Field(
@@ -137,18 +129,12 @@ class Tools:
         ),
     ) -> str:
         """Search for albums by name using the Last.fm album.search API."""
-        api_key = self._get_api_key(__user__)
-        if not api_key:
-            return "Error: Last.fm API key not provided."
-        params = {"album": album, "limit": limit}
-        if artist:
-            params["artist"] = artist
-        data = self._make_request(api_key, "album.search", params)
-        if not data:
-            return f"No results found for album '{album}'."
-        error = self._check_api_error(data)
-        if error:
-            return error
+        try:
+            api_key = self._get_api_key(__user__)
+            params = {"album": album, "limit": limit, **({"artist": artist} if artist else {})}
+            data = self._make_request(api_key, "album.search", params)
+        except RuntimeError as exc:
+            return f"Error: {exc}"
         results = data.get("results", {})
         matches = results.get("albummatches", {}).get("album", [])
         if not matches:
@@ -170,7 +156,7 @@ class Tools:
         __user__: dict,
         artist: Annotated[str, Field(description="Artist name")],
         mbid: Annotated[
-            str | None,
+            Optional[str],
             Field(
                 description="MusicBrainz ID for the artist. If provided, artist parameter is ignored."
             ),
@@ -183,21 +169,13 @@ class Tools:
         ),
     ) -> str:
         """Return similar artists to a given artist."""
-        api_key = self._get_api_key(__user__)
-        if not api_key:
-            return "Error: Last.fm API key not provided."
-        params = {}
-        if mbid:
-            params["mbid"] = mbid
-        else:
-            params["artist"] = artist
-        params["limit"] = limit
-        data = self._make_request(api_key, "artist.getSimilar", params)
-        if not data:
-            return "No similar artists found. Please check the artist name, or provide a valid MBID."
-        error = self._check_api_error(data)
-        if error:
-            return error
+        try:
+            api_key = self._get_api_key(__user__)
+            params = {"mbid": mbid} if mbid else {"artist": artist, "limit": limit}
+            data = self._make_request(api_key, "artist.getSimilar", params
+            )
+        except RuntimeError as exc:
+            return f"Error: {exc}"
         if "similarartists" not in data or "artist" not in data["similarartists"]:
             return "No similar artists data returned."
         similar_artists = data["similarartists"]["artist"]
@@ -228,16 +206,12 @@ class Tools:
         ),
     ) -> str:
         """Search for artists by name using the Last.fm artist.search API."""
-        api_key = self._get_api_key(__user__)
-        if not api_key:
-            return "Error: Last.fm API key not provided."
-        params = {"artist": artist, "limit": limit}
-        data = self._make_request(api_key, "artist.search", params)
-        if not data:
-            return f"No results found for artist '{artist}'."
-        error = self._check_api_error(data)
-        if error:
-            return error
+        try:
+            api_key = self._get_api_key(__user__)
+            params = {"artist": artist, "limit": limit}
+            data = self._make_request(api_key, "artist.search", params)
+        except RuntimeError as exc:
+            return f"Error: {exc}"
         results = data.get("results", {})
         matches = results.get("artistmatches", {}).get("artist", [])
         if not matches:
@@ -252,33 +226,24 @@ class Tools:
             lines.append(f"{i}. **{name}** (MBID: {mbid}) – [{url}]({url})")
         return "\n".join(lines)
 
-
     def get_artist_info(
         self,
         __user__: dict,
         artist: Annotated[str, Field(description="Artist name")],
         mbid: Annotated[
-            str | None,
+            Optional[str],
             Field(
                 description="MusicBrainz ID for the artist. If provided, artist parameter is ignored."
             ),
         ] = None,
     ) -> str:
         """Return information about a specific artist."""
-        api_key = self._get_api_key(__user__)
-        if not api_key:
-            return "Error: Last.fm API key not provided."
-        params = {}
-        if mbid:
-            params["mbid"] = mbid
-        else:
-            params["artist"] = artist
-        data = self._make_request(api_key, "artist.getinfo", params)
-        if not data:
-            return "No artist information found. Please check the artist name, or provide a valid MBID."
-        error = self._check_api_error(data)
-        if error:
-            return error
+        try:
+            api_key = self._get_api_key(__user__)
+            params = {"mbid": mbid} if mbid else {"artist": artist}
+            data = self._make_request(api_key, "artist.getinfo", params)
+        except RuntimeError as exc:
+            return f"Error: {exc}"
         if "artist" not in data:
             return "No artist data returned."
         artist_data = data["artist"]
@@ -319,7 +284,7 @@ class Tools:
         __user__: dict,
         artist: Annotated[str, Field(description="Artist name")],
         mbid: Annotated[
-            str | None,
+            Optional[str],
             Field(
                 description="MusicBrainz ID for the artist. If provided, artist parameter is ignored."
             ),
@@ -332,21 +297,12 @@ class Tools:
         ),
     ) -> str:
         """Return an artist's top albums."""
-        api_key = self._get_api_key(__user__)
-        if not api_key:
-            return "Error: Last.fm API key not provided."
-        params = {}
-        if mbid:
-            params["mbid"] = mbid
-        else:
-            params["artist"] = artist
-        params["limit"] = limit
-        data = self._make_request(api_key, "artist.gettopalbums", params)
-        if not data:
-            return "No top albums found. Please check the artist name, or provide a valid MBID."
-        error = self._check_api_error(data)
-        if error:
-            return error
+        try:
+            api_key = self._get_api_key(__user__)
+            params = {"mbid": mbid} if mbid else {"artist": artist, "limit": limit}
+            data = self._make_request(api_key, "artist.gettopalbums", params)
+        except RuntimeError as exc:
+            return f"Error: {exc}"
         if "topalbums" not in data or "album" not in data["topalbums"]:
             return "No album data returned."
         albums = data["topalbums"]["album"]
@@ -367,7 +323,7 @@ class Tools:
         __user__: dict,
         artist: Annotated[str, Field(description="Artist name")],
         mbid: Annotated[
-            str | None,
+            Optional[str],
             Field(
                 description="MusicBrainz ID for the artist. If provided, artist parameter is ignored."
             ),
@@ -380,21 +336,12 @@ class Tools:
         ),
     ) -> str:
         """Return an artist's top tracks."""
-        api_key = self._get_api_key(__user__)
-        if not api_key:
-            return "Error: Last.fm API key not provided."
-        params = {}
-        if mbid:
-            params["mbid"] = mbid
-        else:
-            params["artist"] = artist
-        params["limit"] = limit
-        data = self._make_request(api_key, "artist.gettoptracks", params)
-        if not data:
-            return "No top tracks found. Please check the artist name, or provide a valid MBID."
-        error = self._check_api_error(data)
-        if error:
-            return error
+        try:
+            api_key = self._get_api_key(__user__)
+            params = {"mbid": mbid} if mbid else {"artist": artist, "limit": limit}
+            data = self._make_request(api_key, "artist.gettoptracks", params)
+        except RuntimeError as exc:
+            return f"Error: {exc}"
         if "toptracks" not in data or "track" not in data["toptracks"]:
             return "No track data returned."
         tracks = data["toptracks"]["track"]
@@ -417,28 +364,19 @@ class Tools:
         artist: Annotated[str, Field(description="Artist name")],
         track: Annotated[str, Field(description="Track name")],
         mbid: Annotated[
-            str | None,
+            Optional[str],
             Field(
                 description="MusicBrainz ID for the track. If provided, artist and track are ignored."
             ),
         ] = None,
     ) -> str:
         """Return information about a specific track."""
-        api_key = self._get_api_key(__user__)
-        if not api_key:
-            return "Error: Last.fm API key not provided."
-        params = {}
-        if mbid:
-            params["mbid"] = mbid
-        else:
-            params["artist"] = artist
-            params["track"] = track
-        data = self._make_request(api_key, "track.getInfo", params)
-        if not data:
-            return "No track information found. Please check the artist and track names, or provide a valid MBID."
-        error = self._check_api_error(data)
-        if error:
-            return error
+        try:
+            api_key = self._get_api_key(__user__)
+            params = {"mbid": mbid} if mbid else {"artist": artist, "track": track}
+            data = self._make_request(api_key, "track.getInfo", params)
+        except RuntimeError as exc:
+            return f"Error: {exc}"
         if "track" not in data:
             return "No track data returned."
         track_data = data["track"]
@@ -487,29 +425,19 @@ class Tools:
             ),
         ],
         mbid: Annotated[
-            str | None,
+            Optional[str],
             Field(
                 description="MusicBrainz ID for the track. If provided, artist and track are ignored."
             ),
         ] = None,
     ) -> str:
         """Return similar tracks to a given track."""
-        api_key = self._get_api_key(__user__)
-        if not api_key:
-            return "Error: Last.fm API key not provided."
-        params = {}
-        if mbid:
-            params["mbid"] = mbid
-        else:
-            params["artist"] = artist
-            params["track"] = track
-        params["limit"] = limit
-        data = self._make_request(api_key, "track.getSimilar", params)
-        if not data:
-            return "No similar tracks found. Please check the artist and track names, or provide a valid MBID."
-        error = self._check_api_error(data)
-        if error:
-            return error
+        try:
+            api_key = self._get_api_key(__user__)
+            params = {"mbid": mbid} if mbid else {"artist": artist, "track": track, "limit": limit}
+            data = self._make_request(api_key,"track.getSimilar", params)
+        except RuntimeError as exc:
+            return f"Error: {exc}"
         if "similartracks" not in data or "track" not in data["similartracks"]:
             return "No similar tracks data returned."
         similar_tracks = data["similartracks"]["track"]
@@ -530,7 +458,7 @@ class Tools:
         __user__: dict,
         track: Annotated[str, Field(description="Track name to search for")],
         artist: Annotated[
-            str | None,
+            Optional[str],
             Field(description="Artist name to narrow the search (optional)"),
         ] = None,
         limit: int = Field(
@@ -541,18 +469,12 @@ class Tools:
         ),
     ) -> str:
         """Search for tracks by name using the Last.fm track.search API."""
-        api_key = self._get_api_key(__user__)
-        if not api_key:
-            return "Error: Last.fm API key not provided."
-        params = {"track": track, "limit": limit}
-        if artist:
-            params["artist"] = artist
-        data = self._make_request(api_key, "track.search", params)
-        if not data:
-            return f"No results found for track '{track}'."
-        error = self._check_api_error(data)
-        if error:
-            return error
+        try:
+            api_key = self._get_api_key(__user__)
+            params = {"track": track, "limit": limit, **({"artist": artist} if artist else {})}
+            data = self._make_request(api_key, "track.search", params)
+        except RuntimeError as exc:
+            return f"Error: {exc}"
         results = data.get("results", {})
         matches = results.get("trackmatches", {}).get("track", [])
         if not matches:
@@ -573,24 +495,19 @@ class Tools:
         self,
         __user__: dict,
         user: Annotated[
-            str | None,
+            Optional[str],
             Field(
                 description="Last.fm username. If not provided, the default user from the valves will be used."
             ),
         ] = None,
     ) -> str:
         """Return information about a specific user."""
-        api_key = self._get_api_key(__user__)
-        if not api_key:
-            return "Error: Last.fm API key not provided."
-        username = self._get_username(__user__, user)
-
-        data = self._make_request(api_key, "user.getInfo", {"user": username})
-        if not data:
-            return "Error: Last.fm API key not provided."
-        error = self._check_api_error(data)
-        if error:
-            return error
+        try:
+            api_key = self._get_api_key(__user__)
+            params = {"user": self._get_username(__user__, user) or ""}
+            data = self._make_request(api_key, "user.getInfo", params)
+        except RuntimeError as exc:
+            return f"Error: {exc}"
         if "user" not in data:
             return "No user data returned."
         user_data = data["user"]
@@ -635,20 +552,15 @@ class Tools:
         ],
     ) -> str:
         """Return list of the user's top albums."""
-        api_key = self._get_api_key(__user__)
-        if not api_key:
-            return "Error: Last.fm API key not provided."
-        username = self._get_username(__user__)
-        if not username:
-            return "Error: Last.fm username not provided."
-        data = self._make_request(
-            api_key, "user.gettopalbums", {"user": username, "limit": limit}
-        )
-        if not data:
-            return "No top albums found."
-        error = self._check_api_error(data)
-        if error:
-            return error
+        try:
+            api_key = self._get_api_key(__user__)
+            username = self._get_username(__user__)
+            if not username:
+                return "Error: Last.fm username not provided."
+            params = {"user": username, "limit": limit}
+            data = self._make_request(api_key, "user.gettopalbums", params)
+        except RuntimeError as exc:
+            return f"Error: {exc}"
         if "topalbums" not in data or "album" not in data["topalbums"]:
             return "No album data returned."
         albums = data["topalbums"]["album"]
@@ -676,20 +588,15 @@ class Tools:
         ],
     ) -> str:
         """Return a formatted list of the user's top (most listened to) tracks."""
-        api_key = self._get_api_key(__user__)
-        if not api_key:
-            return "Error: Last.fm API key not provided."
-        username = self._get_username(__user__)
-        if not username:
-            return "Error: Last.fm username not provided."
-        data = self._make_request(
-            api_key, "user.gettoptracks", {"user": username, "limit": limit}
-        )
-        if not data:
-            return "No top tracks found."
-        error = self._check_api_error(data)
-        if error:
-            return error
+        try:
+            api_key = self._get_api_key(__user__)
+            username = self._get_username(__user__)
+            if not username:
+                return "Error: Last.fm username not provided."
+            params = {"user": username, "limit": limit}
+            data = self._make_request(api_key, "user.gettoptracks", params)
+        except RuntimeError as exc:
+            return f"Error: {exc}"
         if "toptracks" not in data or "track" not in data["toptracks"]:
             return "No track data returned."
         tracks = data["toptracks"]["track"]
@@ -707,7 +614,7 @@ class Tools:
         self,
         __user__: dict,
         user: Annotated[
-            str | None,
+            Optional[str],
             Field(
                 description="Last.fm username. If not provided, the default user from the valves will be used."
             ),
@@ -720,19 +627,15 @@ class Tools:
         ),
     ) -> str:
         """Return the user's recently played tracks."""
-        api_key = self._get_api_key(__user__)
-        if not api_key:
-            return "Error: Last.fm API key not provided."
-        username = self._get_username(__user__, user)
-        if not username:
-            return "Error: Last.fm username not provided."
-        params = {"user": username, "limit": limit}
-        data = self._make_request(api_key, "user.getrecenttracks", params)
-        if not data:
-            return "No recent tracks found."
-        error = self._check_api_error(data)
-        if error:
-            return error
+        try:
+            api_key = self._get_api_key(__user__)
+            username = self._get_username(__user__, user)
+            if not username:
+                return "Error: Last.fm username not provided."
+            params = {"user": username, "limit": limit}
+            data = self._make_request(api_key, "user.getrecenttracks", params)
+        except RuntimeError as exc:
+            return f"Error: {exc}"
         if "recenttracks" not in data or "track" not in data["recenttracks"]:
             return "No recent tracks data returned."
         tracks = data["recenttracks"]["track"]
@@ -763,7 +666,7 @@ class Tools:
         self,
         __user__: dict,
         user: Annotated[
-            str | None,
+            Optional[str],
             Field(
                 description="Last.fm username. If not provided, the default user from the valves will be used."
             ),
@@ -776,20 +679,15 @@ class Tools:
         ),
     ) -> str:
         """Return the user's top (most listened to) artists."""
-        api_key = self._get_api_key(__user__)
-        if not api_key:
-            return "Error: Last.fm API key not provided."
-        username = self._get_username(__user__, user)
-        if not username:
-            return "Error: Last.fm username not provided."
-        data = self._make_request(
-            api_key, "user.gettopartists", {"user": username, "limit": limit}
-        )
-        if not data:
-            return "No top artists found."
-        error = self._check_api_error(data)
-        if error:
-            return error
+        try:
+            api_key = self._get_api_key(__user__)
+            username = self._get_username(__user__, user)
+            if not username:
+                return "Error: Last.fm username not provided."
+            params = {"user": username, "limit": limit}
+            data = self._make_request(api_key, "user.gettopartists", params)
+        except RuntimeError as exc:
+            return f"Error: {exc}"
         if "topartists" not in data or "artist" not in data["topartists"]:
             return "No artist data returned."
         artists = data["topartists"]["artist"]
@@ -809,25 +707,22 @@ class Tools:
         self,
         __user__: dict,
         user: Annotated[
-            str | None,
+            Optional[str],
             Field(
                 description="Last.fm username. If not provided, the default user from the valves will be used."
             ),
         ] = None,
     ) -> str:
         """Return the user's weekly artist chart."""
-        api_key = self._get_api_key(__user__)
-        if not api_key:
-            return "Error: Last.fm API key not provided."
-        username = self._get_username(__user__, user)
-        if not username:
-            return "Error: Last.fm username not provided."
-        data = self._make_request(api_key, "user.getweeklyartistchart", {"user": username})
-        if not data:
-            return "No weekly artist chart found."
-        error = self._check_api_error(data)
-        if error:
-            return error
+        try:
+            api_key = self._get_api_key(__user__)
+            username = self._get_username(__user__, user)
+            if not username:
+                return "Error: Last.fm username not provided."
+            params = {"user": username}
+            data = self._make_request(api_key, "user.getweeklyartistchart", params)
+        except RuntimeError as exc:
+            return f"Error: {exc}"
         if "weeklyartistchart" not in data or "artist" not in data["weeklyartistchart"]:
             return "No weekly artist chart data returned."
         artists = data["weeklyartistchart"]["artist"]
@@ -847,25 +742,22 @@ class Tools:
         self,
         __user__: dict,
         user: Annotated[
-            str | None,
+            Optional[str],
             Field(
                 description="Last.fm username. If not provided, the default user from the valves will be used."
             ),
         ] = None,
     ) -> str:
         """Return the user's weekly album chart."""
-        api_key = self._get_api_key(__user__)
-        if not api_key:
-            return "Error: Last.fm API key not provided."
-        username = self._get_username(__user__, user)
-        if not username:
-            return "Error: Last.fm username not provided."
-        data = self._make_request(api_key, "user.getweeklyalbumchart", {"user": username})
-        if not data:
-            return "No weekly album chart found."
-        error = self._check_api_error(data)
-        if error:
-            return error
+        try:
+            api_key = self._get_api_key(__user__)
+            username = self._get_username(__user__, user)
+            if not username:
+                return "Error: Last.fm username not provided."
+            params = {"user": username}
+            data = self._make_request(api_key, "user.getweeklyalbumchart", params)
+        except RuntimeError as exc:
+            return f"Error: {exc}"
         if "weeklyalbumchart" not in data or "album" not in data["weeklyalbumchart"]:
             return "No weekly album chart data returned."
         albums = data["weeklyalbumchart"]["album"]
@@ -887,25 +779,22 @@ class Tools:
         self,
         __user__: dict,
         user: Annotated[
-            str | None,
+            Optional[str],
             Field(
                 description="Last.fm username. If not provided, the default user from the valves will be used."
             ),
         ] = None,
     ) -> str:
         """Return the user's weekly track chart."""
-        api_key = self._get_api_key(__user__)
-        if not api_key:
-            return "Error: Last.fm API key not provided."
-        username = self._get_username(__user__, user)
-        if not username:
-            return "Error: Last.fm username not provided."
-        data = self._make_request(api_key, "user.getweeklytrackchart", {"user": username})
-        if not data:
-            return "No weekly track chart found."
-        error = self._check_api_error(data)
-        if error:
-            return error
+        try:
+            api_key = self._get_api_key(__user__)
+            username = self._get_username(__user__, user)
+            if not username:
+                return "Error: Last.fm username not provided."
+            params = {"user": username}
+            data = self._make_request(api_key, "user.getweeklytrackchart", params)
+        except RuntimeError as exc:
+            return f"Error: {exc}"
         if "weeklytrackchart" not in data or "track" not in data["weeklytrackchart"]:
             return "No weekly track chart data returned."
         tracks = data["weeklytrackchart"]["track"]
