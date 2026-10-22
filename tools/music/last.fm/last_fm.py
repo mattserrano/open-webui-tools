@@ -90,7 +90,6 @@ class Tools:
         last_fm_api_user: str = Field(
             default="",
             description="Your last.fm username",
-            type="string",
         )
         enable_rich_responses: bool = Field(
             default=False,
